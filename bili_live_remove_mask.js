@@ -37,6 +37,11 @@
     // 保存定时器引用以便清理
     const timers = [];
 
+    // 自动卸载相关配置
+    const MAX_EMPTY_CHECKS = 3; // 连续未检测到遮罩的最大次数
+    let emptyCheckCount = 0; // 连续未检测到遮罩的计数器
+    let isUnloaded = false; // 脚本是否已卸载
+
     //清除等待的遮罩时间,单位为毫秒
     const clear_time = 5000
 
@@ -161,6 +166,9 @@
                     document.body.setAttribute(PROCESSED_FLAG, 'true');
                 }
 
+                // 重置未检测到遮罩的计数器（因为检测到了遮罩）
+                emptyCheckCount = 0;
+
                 consoleStyle.success(`成功移除 ${elementCount} 个遮罩元素`);
 
                 for(let i = 0; i < exp; i++){
@@ -177,7 +185,11 @@
     }
 
     // 清理所有资源的函数
-    function cleanup() {
+    function cleanup(isAutoUnload = false) {
+        if (isUnloaded) {
+            return; // 防止重复卸载
+        }
+
         // 清理所有定时器
         timers.forEach(timer => {
             if (typeof timer === 'number') {
@@ -194,7 +206,14 @@
             messageElement.remove();
         }
 
-        consoleStyle.success('脚本资源清理完成');
+        // 标记为已卸载
+        isUnloaded = true;
+
+        if (isAutoUnload) {
+            consoleStyle.success('连续3次未检测到遮罩，脚本已自动卸载');
+        } else {
+            consoleStyle.success('脚本资源清理完成');
+        }
     }
 
     // 页面卸载时清理资源
@@ -213,14 +232,34 @@
 
         // 定期检查并清理新出现的遮罩
         const checkTimer = setInterval(function() {
+            // 如果脚本已卸载，停止检查
+            if (isUnloaded) {
+                clearInterval(checkTimer);
+                return;
+            }
+
             // 再次检查是否在真实直播间
             if (!isInValidLiveRoom()) {
                 return;
             }
+
             const elements = document.getElementsByClassName("web-player-module-area-mask");
             if (elements.length > 0) {
+                // 检测到遮罩，重置计数器
+                emptyCheckCount = 0;
                 consoleStyle.info(`检测到 ${elements.length} 个新的遮罩元素，正在清理...`);
                 removeElementsByClassName("web-player-module-area-mask");
+            } else {
+                // 未检测到遮罩，增加计数器
+                emptyCheckCount++;
+                consoleStyle.info(`未检测到遮罩元素 (${emptyCheckCount}/${MAX_EMPTY_CHECKS})`);
+
+                // 如果连续3次未检测到遮罩，自动卸载
+                if (emptyCheckCount >= MAX_EMPTY_CHECKS) {
+                    clearInterval(checkTimer);
+                    cleanup(true); // 自动卸载
+                    return;
+                }
             }
         }, 2000);
         timers.push(checkTimer);
