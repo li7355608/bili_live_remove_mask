@@ -1,10 +1,10 @@
 // ==UserScript==
-// @name         哔哩哔哩直播去除马赛克遮罩
+// @name         [哔哩哔哩直播]-去除马赛克遮罩
 // @description  去掉直播间各种烦人的马赛克遮罩,还你一个干净的直播间,增强观看体验,去他的昵称马赛克.
 // @author       Asuna
 // @match        https://live.bilibili.com/*
 // @icon         https://www.bilibili.com/favicon.ico
-// @version      1.1
+// @version      1.3
 // @license      MIT
 // @namespace https://greasyfork.org/users/1390050
 // @downloadURL https://update.greasyfork.org/scripts/516800/%E5%93%94%E5%93%A9%E5%93%94%E5%93%A9%E5%8E%BB%E9%99%A4%E7%9B%B4%E6%92%AD%E9%97%B4%E9%A9%AC%E8%B5%9B%E5%85%8B.user.js
@@ -41,6 +41,8 @@
     const MAX_EMPTY_CHECKS = 3; // 连续未检测到遮罩的最大次数
     let emptyCheckCount = 0; // 连续未检测到遮罩的计数器
     let isUnloaded = false; // 脚本是否已卸载
+    let checkTimer = null; // 定期检查定时器引用
+    let isCheckingStarted = false; // 是否已开始定期检查
 
     //清除等待的遮罩时间,单位为毫秒
     const clear_time = 5000
@@ -135,19 +137,19 @@
         // 检查是否在真实直播间
         if (!isInValidLiveRoom()) {
             // 不在真实直播间页面，不处理
-            return;
+            return false;
         }
 
         // 防止重复执行
         if (isProcessing) {
             consoleStyle.warning('遮罩清理正在进行中，跳过重复执行');
-            return;
+            return false;
         }
 
         // 检查是否已经处理过
         if (document.body && document.body.getAttribute(PROCESSED_FLAG) === 'true') {
             consoleStyle.info('遮罩已清理，跳过重复处理');
-            return;
+            return false;
         }
 
         isProcessing = true;
@@ -174,20 +176,79 @@
                 for(let i = 0; i < exp; i++){
                     showFloatingMessage(msg, color);
                 }
+
+                return true; // 成功清除遮罩
             } else {
                 consoleStyle.info('未检测到遮罩元素');
+                return false; // 未检测到遮罩
             }
         } catch (error) {
             consoleStyle.error(`移除遮罩时出错: ${error.message || error}`);
+            return false;
         } finally {
             isProcessing = false;
         }
+    }
+
+    // 启动定期检查函数
+    function startPeriodicCheck() {
+        // 如果已经开始检查，不重复启动
+        if (isCheckingStarted) {
+            return;
+        }
+
+        isCheckingStarted = true;
+        consoleStyle.info('遮罩已清除，开始定期检查新出现的遮罩');
+
+        // 定期检查并清理新出现的遮罩
+        checkTimer = setInterval(function() {
+            // 如果脚本已卸载，停止检查
+            if (isUnloaded) {
+                if (checkTimer) {
+                    clearInterval(checkTimer);
+                }
+                return;
+            }
+
+            // 再次检查是否在真实直播间
+            if (!isInValidLiveRoom()) {
+                return;
+            }
+
+            const elements = document.getElementsByClassName("web-player-module-area-mask");
+            if (elements.length > 0) {
+                // 检测到遮罩，重置计数器
+                emptyCheckCount = 0;
+                consoleStyle.info(`检测到 ${elements.length} 个新的遮罩元素，正在清理...`);
+                removeElementsByClassName("web-player-module-area-mask");
+            } else {
+                // 未检测到遮罩，增加计数器
+                emptyCheckCount++;
+                consoleStyle.info(`未检测到遮罩元素 (${emptyCheckCount}/${MAX_EMPTY_CHECKS})`);
+
+                // 如果连续3次未检测到遮罩，自动卸载
+                if (emptyCheckCount >= MAX_EMPTY_CHECKS) {
+                    if (checkTimer) {
+                        clearInterval(checkTimer);
+                    }
+                    cleanup(true); // 自动卸载
+                    return;
+                }
+            }
+        }, 2000);
+        timers.push(checkTimer);
     }
 
     // 清理所有资源的函数
     function cleanup(isAutoUnload = false) {
         if (isUnloaded) {
             return; // 防止重复卸载
+        }
+
+        // 清理定期检查定时器
+        if (checkTimer) {
+            clearInterval(checkTimer);
+            checkTimer = null;
         }
 
         // 清理所有定时器
@@ -226,44 +287,18 @@
     if (isInValidLiveRoom()) {
         // 延迟执行遮罩清理
         const clearTimer = setTimeout(function() {
-            removeElementsByClassName("web-player-module-area-mask");
+            const hasRemoved = removeElementsByClassName("web-player-module-area-mask");
+            // 只有在成功清除遮罩后才开始定期检查
+            if (hasRemoved) {
+                startPeriodicCheck();
+            } else {
+                // 如果初始检查没有遮罩，直接卸载脚本
+                consoleStyle.info('初始检查未检测到遮罩元素，脚本将自动卸载');
+                cleanup(true);
+            }
         }, clear_time);
         timers.push(clearTimer);
-
-        // 定期检查并清理新出现的遮罩
-        const checkTimer = setInterval(function() {
-            // 如果脚本已卸载，停止检查
-            if (isUnloaded) {
-                clearInterval(checkTimer);
-                return;
-            }
-
-            // 再次检查是否在真实直播间
-            if (!isInValidLiveRoom()) {
-                return;
-            }
-
-            const elements = document.getElementsByClassName("web-player-module-area-mask");
-            if (elements.length > 0) {
-                // 检测到遮罩，重置计数器
-                emptyCheckCount = 0;
-                consoleStyle.info(`检测到 ${elements.length} 个新的遮罩元素，正在清理...`);
-                removeElementsByClassName("web-player-module-area-mask");
-            } else {
-                // 未检测到遮罩，增加计数器
-                emptyCheckCount++;
-                consoleStyle.info(`未检测到遮罩元素 (${emptyCheckCount}/${MAX_EMPTY_CHECKS})`);
-
-                // 如果连续3次未检测到遮罩，自动卸载
-                if (emptyCheckCount >= MAX_EMPTY_CHECKS) {
-                    clearInterval(checkTimer);
-                    cleanup(true); // 自动卸载
-                    return;
-                }
-            }
-        }, 2000);
-        timers.push(checkTimer);
     } else {
-        consoleStyle.info('当前页面不是真实直播间，脚本已跳过执行（可能是嵌入式播放器或活动页）');
+        consoleStyle.info('当前页面不是真实直播间，脚本已跳过执行');
     }
 })();
